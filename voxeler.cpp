@@ -311,10 +311,10 @@ bool triBoxOverlap(const Vector3& boxcenter, const Vector3& boxhalfsize, const T
 }
 
 /**
- * Coordinate structure for voxel grid indexing
+ * Voxel index structure for voxel grid indexing
  * Stores integer coordinates in the voxel grid
  */
-struct Coord {
+struct VoxelIdx {
     int i, j, k;  // i, j, k represent indices along the x, y, z axes respectively
 };
 
@@ -492,6 +492,7 @@ int main(int argc, char* argv[]) {
     auto endTime = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
     std::cout << "  Completed in " << duration.count() / 1000.0 << " seconds" << std::endl;
+    
     // Interior filling using flood fill algorithm
     // This marks all voxels inside the mesh boundary as occupied
     if (fillInterior) {
@@ -518,7 +519,7 @@ int main(int argc, char* argv[]) {
         };
         
         // Use BFS (Breadth-First Search) for flood fill
-        std::queue<Coord> queue;
+        std::queue<VoxelIdx> queue;
         
         // Start with boundary voxels (6 faces of the volume)
         // This ensures we begin the fill from outside the mesh
@@ -576,7 +577,7 @@ int main(int argc, char* argv[]) {
         size_t processedVoxels = 0;
         
         while (!queue.empty()) {
-            Coord current = queue.front();
+            VoxelIdx current = queue.front();
             queue.pop();
             
             // Progress tracking
@@ -732,7 +733,10 @@ int main(int argc, char* argv[]) {
     // out.close();
 
     // Optimized file writing with buffering for better performance
-    // This approach significantly reduces I/O overhead for large models
+    // By using buffered I/O instead of writing each voxel individually, we minimize
+    // the number of system calls and disk operations, which are typically much slower
+    // than in-memory operations. This is especially important when dealing with
+    // millions of voxels, as each system call has overhead.
     std::ofstream out(outputFilename);
     
     // Set larger buffer size (8MB) to reduce system calls
@@ -742,17 +746,25 @@ int main(int argc, char* argv[]) {
     out.rdbuf()->pubsetbuf(buffer, BUFFER_SIZE);
     
     // Disable synchronization with C standard streams for better performance
+    // This prevents unnecessary flushing between C and C++ I/O operations,
+    // reducing overhead and improving file writing speed significantly
     out.sync_with_stdio(false);
     
     // Use a string stream for efficient string building before writing to file
+    // A stringstream is an in-memory stream that allows for efficient string manipulation
+    // without the overhead of file I/O operations. By accumulating output in memory first,
+    // we can reduce the number of actual disk write operations, which are significantly
+    // slower. Unlike writing directly to ofstream for each voxel, this approach batches
+    // multiple voxels together before flushing to disk, greatly improving performance
+    // when dealing with millions of voxels.
     std::stringstream ss;
     ss.sync_with_stdio(false);
     
     // Process in chunks to avoid excessive memory usage
     // This allows handling very large models without running out of memory
     const int CHUNK_SIZE = 1000000; // Process 1M voxels at a time
-    std::vector<Vector3> centers;
-    centers.reserve(CHUNK_SIZE);
+    std::vector<VoxelIdx> voxels_ijk;
+    voxels_ijk.reserve(CHUNK_SIZE);
     
     // First pass: collect voxel centers in batches and write to file
     auto writeStartTime = std::chrono::high_resolution_clock::now();
@@ -774,19 +786,16 @@ int main(int argc, char* argv[]) {
                 
                 // For occupied voxels, calculate center coordinates and store for output
                 if (voxels[index(i, j, k)]) {
-                    Vector3 center(minB.x + (i + 0.5) * voxelSize,
-                                    minB.y + (j + 0.5) * voxelSize,
-                                    minB.z + (k + 0.5) * voxelSize);
-                    centers.push_back(center);
+                    voxels_ijk.push_back({i, j, k});
                     
                     // Write chunk if buffer is full to manage memory usage
-                    if (centers.size() >= CHUNK_SIZE) {
-                        for (const auto& c : centers) {
-                            ss << c.x << " " << c.y << " " << c.z << "\n";
+                    if (voxels_ijk.size() >= CHUNK_SIZE) {
+                        for (const auto& c : voxels_ijk) {
+                            ss << c.i << "," << c.j << "," << c.k << "\n";
                         }
-                        out << ss.str();
-                        ss.str(""); // Clear the string stream
-                        centers.clear();
+                        out << ss.str();  // Write the accumulated voxel data from stringstream to the output file
+                        ss.str("");  // Clear the stringstream buffer to free memory and prepare for new data
+                        voxels_ijk.clear();  // Clear the centers vector to free memory and prepare for next batch of voxels
                     }
                 }
             }
@@ -794,9 +803,9 @@ int main(int argc, char* argv[]) {
     }
     
     // Write any remaining centers at the end
-    if (!centers.empty()) {
-        for (const auto& c : centers) {
-            ss << c.x << " " << c.y << " " << c.z << "\n";
+    if (!voxels_ijk.empty()) {
+        for (const auto& c : voxels_ijk) {
+            ss << c.i << "," << c.j << "," << c.k << "\n";
         }
         out << ss.str();
     }
