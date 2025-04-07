@@ -158,6 +158,31 @@ bool loadSTL(const std::string& filename, std::vector<Triangle>& triangles) {
     return !triangles.empty();
 }
 
+// Save voxel size and grid dimensions to a separate metadata file
+void saveVoxelMetadata(const std::string& baseFilename, double voxelSize, int Nx, int Ny, int Nz, 
+    const Vector3& minB, const Vector3& maxB) {
+    // Create metadata filename
+    std::string metaFilename = baseFilename + "-metadata.txt";
+    std::cout << "Writing voxelization metadata to " << metaFilename << std::endl;
+
+    // Open the file
+    std::ofstream metaFile(metaFilename);
+    if (!metaFile) {
+    std::cerr << "Error: Could not open metadata file for writing." << std::endl;
+    return;
+    }
+
+    // Write voxel dimensions and other useful information
+    metaFile << "voxel_size: " << voxelSize << std::endl;
+    metaFile << "grid_dimensions: " << Nx << " " << Ny << " " << Nz << std::endl;
+    metaFile << "total_voxels: " << (Nx * Ny * Nz) << std::endl;
+    metaFile << "min_bounds: " << minB.x << " " << minB.y << " " << minB.z << std::endl;
+    metaFile << "max_bounds: " << maxB.x << " " << maxB.y << " " << maxB.z << std::endl;
+
+    metaFile.close();
+    std::cout << "Metadata saved successfully." << std::endl;
+}
+
 /**
  * Determines if a triangle from the STL surface mesh intersects with an axis-aligned box (a voxel) using the Separating Axis Theorem (SAT)
  * 
@@ -344,10 +369,16 @@ int main(int argc, char* argv[]) {
     // Parse optional fill flag which determines whether to fill the interior volume
     // If enabled, the algorithm will mark voxels inside the mesh as occupied
     bool fillInterior = false;
-    if (argc >= 4) {
-        std::string flag = argv[3];
-        if (flag == "fill" || flag == "--fill")
+    bool denseOutput = false;
+
+    // Process all optional arguments
+    for (int i = 3; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "fill" || arg == "--fill") {
             fillInterior = true;
+        } else if (arg == "--dense") {
+            denseOutput = true;
+        }
     }
 
     // Load STL mesh data from the input file
@@ -696,6 +727,7 @@ int main(int argc, char* argv[]) {
     //          << std::fixed << std::setprecision(2) << memoryUsageMB << " MB)" 
     //          << std::endl;
     //}
+
     // Count occupied voxels for final statistics
     std::cout << "Counting occupied voxels..." << std::endl;
     auto countStartTime = std::chrono::high_resolution_clock::now();
@@ -716,8 +748,12 @@ int main(int argc, char* argv[]) {
     if (lastDot != std::string::npos) {
         baseFilename = baseFilename.substr(0, lastDot);
     }
-    std::string outputFilename = baseFilename + "-voxeled.txt";
+    std::string formatSuffix = denseOutput ? "-dense" : "-sparse";
+    std::string outputFilename = baseFilename + formatSuffix + ".txt";
     
+    // Call the metadata saving function before writing the actual voxel data
+    saveVoxelMetadata(baseFilename, voxelSize, Nx, Ny, Nz, minB, maxB);
+
     // Note: The simple approach below is commented out as it's less efficient
     // for large models due to frequent I/O operations
     // std::ofstream out(outputFilename);
@@ -732,88 +768,134 @@ int main(int argc, char* argv[]) {
     //             }
     // out.close();
 
+    auto writeStartTime = std::chrono::high_resolution_clock::now();
+
     // Optimized file writing with buffering for better performance
     // By using buffered I/O instead of writing each voxel individually, we minimize
     // the number of system calls and disk operations, which are typically much slower
     // than in-memory operations. This is especially important when dealing with
     // millions of voxels, as each system call has overhead.
-    std::ofstream out(outputFilename);
     
-    // Set larger buffer size (8MB) to reduce system calls
-    // This improves performance by batching write operations
-    const size_t BUFFER_SIZE = 8 * 1024 * 1024;
-    char* buffer = new char[BUFFER_SIZE];
-    out.rdbuf()->pubsetbuf(buffer, BUFFER_SIZE);
-    
-    // Disable synchronization with C standard streams for better performance
-    // This prevents unnecessary flushing between C and C++ I/O operations,
-    // reducing overhead and improving file writing speed significantly
-    out.sync_with_stdio(false);
-    
-    // Use a string stream for efficient string building before writing to file
-    // A stringstream is an in-memory stream that allows for efficient string manipulation
-    // without the overhead of file I/O operations. By accumulating output in memory first,
-    // we can reduce the number of actual disk write operations, which are significantly
-    // slower. Unlike writing directly to ofstream for each voxel, this approach batches
-    // multiple voxels together before flushing to disk, greatly improving performance
-    // when dealing with millions of voxels.
-    std::stringstream ss;
-    ss.sync_with_stdio(false);
-    
-    // Process in chunks to avoid excessive memory usage
-    // This allows handling very large models without running out of memory
-    const int CHUNK_SIZE = 1000000; // Process 1M voxels at a time
-    std::vector<VoxelIdx> voxels_ijk;
-    voxels_ijk.reserve(CHUNK_SIZE);
-    
-    // First pass: collect voxel centers in batches and write to file
-    auto writeStartTime = std::chrono::high_resolution_clock::now();
-    int totalVoxels = Nx * Ny * Nz;
-    int processedVoxels = 0;
-    lastPercentage = -1;
-    
-    // Iterate through all voxels in the grid
-    for (int k = 0; k < Nz; ++k) {
-        for (int j = 0; j < Ny; ++j) {
-            for (int i = 0; i < Nx; ++i) {
+    if (denseOutput) {
+        // Write dense voxel format (full 3D array)
+        std::cout << "Writing dense voxel format to " << outputFilename << std::endl;
+        std::ofstream out(outputFilename);
+        
+        // Set larger buffer size (8MB) for better performance
+        const size_t BUFFER_SIZE = 8 * 1024 * 1024;
+        char* buffer = new char[BUFFER_SIZE];
+        out.rdbuf()->pubsetbuf(buffer, BUFFER_SIZE);
+        out.sync_with_stdio(false);
+        
+        // Write each voxel as 1 (occupied) or 0 (empty)
+        int totalVoxels = Nx * Ny * Nz;
+        int processedVoxels = 0;
+        int lastPercentage = -1;
+        
+        for (int k = 0; k < Nz; ++k) {
+            for (int j = 0; j < Ny; ++j) {
+                // Build each row as a string for better I/O performance
+                std::string row;
+                for (int i = 0; i < Nx; ++i) {
+                    // Write 1 for occupied, 0 for empty
+                    row += voxels[index(i, j, k)] ? "1" : "0";
+                    if (i < Nx - 1) row += " "; // Space between values except last
+                }
+                out << row << "\n";
+                
                 // Update progress every 1%
-                ++processedVoxels;
+                processedVoxels += Nx;
                 int currentPercentage = (processedVoxels * 100) / totalVoxels;
                 if (currentPercentage > lastPercentage) {
                     std::cout << "\rWriting voxels: " << currentPercentage << "% complete" << std::flush;
                     lastPercentage = currentPercentage;
                 }
-                
-                // For occupied voxels, calculate center coordinates and store for output
-                if (voxels[index(i, j, k)]) {
-                    voxels_ijk.push_back({i, j, k});
+            }
+        }
+        
+        // Clean up resources
+        out.close();
+        delete[] buffer;
+    } else {
+        // Write sparse voxel format (original implementation with i,j,k coordinates)
+        std::cout << "Writing sparse voxel format to " << outputFilename << std::endl;
+        std::ofstream out(outputFilename);
+        
+        // Set larger buffer size (8MB) to reduce system calls
+        // This improves performance by batching write operations
+        const size_t BUFFER_SIZE = 8 * 1024 * 1024;
+        char* buffer = new char[BUFFER_SIZE];
+        out.rdbuf()->pubsetbuf(buffer, BUFFER_SIZE);
+        
+        // Disable synchronization with C standard streams for better performance
+        // This prevents unnecessary flushing between C and C++ I/O operations,
+        // reducing overhead and improving file writing speed significantly
+        out.sync_with_stdio(false);
+        
+        // Use a string stream for efficient string building before writing to file
+        // A stringstream is an in-memory stream that allows for efficient string manipulation
+        // without the overhead of file I/O operations. By accumulating output in memory first,
+        // we can reduce the number of actual disk write operations, which are significantly
+        // slower. Unlike writing directly to ofstream for each voxel, this approach batches
+        // multiple voxels together before flushing to disk, greatly improving performance
+        // when dealing with millions of voxels.
+        std::stringstream ss;
+        ss.sync_with_stdio(false);
+        
+        // Process in chunks to avoid excessive memory usage
+        // This allows handling very large models without running out of memory
+        const int CHUNK_SIZE = 1000000; // Process 1M voxels at a time
+        std::vector<VoxelIdx> voxels_ijk;
+        voxels_ijk.reserve(CHUNK_SIZE);
+        
+        // First pass: collect voxel centers in batches and write to file
+        int totalVoxels = Nx * Ny * Nz;
+        int processedVoxels = 0;
+        lastPercentage = -1;
+        
+        // Iterate through all voxels in the grid
+        for (int k = 0; k < Nz; ++k) {
+            for (int j = 0; j < Ny; ++j) {
+                for (int i = 0; i < Nx; ++i) {
+                    // Update progress every 1%
+                    ++processedVoxels;
+                    int currentPercentage = (processedVoxels * 100) / totalVoxels;
+                    if (currentPercentage > lastPercentage) {
+                        std::cout << "\rWriting voxels: " << currentPercentage << "% complete" << std::flush;
+                        lastPercentage = currentPercentage;
+                    }
                     
-                    // Write chunk if buffer is full to manage memory usage
-                    if (voxels_ijk.size() >= CHUNK_SIZE) {
-                        for (const auto& c : voxels_ijk) {
-                            ss << c.i << "," << c.j << "," << c.k << "\n";
+                    // For occupied voxels, calculate center coordinates and store for output
+                    if (voxels[index(i, j, k)]) {
+                        voxels_ijk.push_back({i, j, k});
+                        
+                        // Write chunk if buffer is full to manage memory usage
+                        if (voxels_ijk.size() >= CHUNK_SIZE) {
+                            for (const auto& c : voxels_ijk) {
+                                ss << c.i << "," << c.j << "," << c.k << "\n";
+                            }
+                            out << ss.str();  // Write the accumulated voxel data from stringstream to the output file
+                            ss.str("");  // Clear the stringstream buffer to free memory and prepare for new data
+                            voxels_ijk.clear();  // Clear the centers vector to free memory and prepare for next batch of voxels
                         }
-                        out << ss.str();  // Write the accumulated voxel data from stringstream to the output file
-                        ss.str("");  // Clear the stringstream buffer to free memory and prepare for new data
-                        voxels_ijk.clear();  // Clear the centers vector to free memory and prepare for next batch of voxels
                     }
                 }
             }
         }
-    }
-    
-    // Write any remaining centers at the end
-    if (!voxels_ijk.empty()) {
-        for (const auto& c : voxels_ijk) {
-            ss << c.i << "," << c.j << "," << c.k << "\n";
+        
+        // Write any remaining centers at the end
+        if (!voxels_ijk.empty()) {
+            for (const auto& c : voxels_ijk) {
+                ss << c.i << "," << c.j << "," << c.k << "\n";
+            }
+            out << ss.str();
         }
-        out << ss.str();
+        
+        // Clean up resources
+        out.close();
+        delete[] buffer;
     }
-    
-    // Clean up resources
-    out.close();
-    delete[] buffer;
-    
+
     // Report file writing performance
     auto writeEndTime = std::chrono::high_resolution_clock::now();
     auto writeDuration = std::chrono::duration_cast<std::chrono::milliseconds>(writeEndTime - writeStartTime);
