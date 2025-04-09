@@ -140,7 +140,7 @@ bool loadSTL(const std::string& filename, std::vector<Triangle>& triangles) {
 
 // Save voxel size and grid dimensions to a separate metadata file
 void saveVoxelMetadata(const std::string& baseFilename, double voxelSize, int Nx, int Ny, int Nz, 
-    const Vector3& minB, const Vector3& maxB) {
+    const Vector3& minB, const Vector3& maxB, int offsetX, int offsetY, int offsetZ) {
     // Create metadata filename
     std::string metaFilename = baseFilename + "-metadata.txt";
     std::cout << "Writing voxelization metadata to " << metaFilename << std::endl;
@@ -158,6 +158,7 @@ void saveVoxelMetadata(const std::string& baseFilename, double voxelSize, int Nx
     metaFile << "total_voxels: " << (Nx * Ny * Nz) << std::endl;
     metaFile << "min_bounds: " << minB.x << " " << minB.y << " " << minB.z << std::endl;
     metaFile << "max_bounds: " << maxB.x << " " << maxB.y << " " << maxB.z << std::endl;
+    metaFile << "voxel_offset: " << offsetX << " " << offsetY << " " << offsetZ << std::endl;
 
     metaFile.close();
     std::cout << "Metadata saved successfully." << std::endl;

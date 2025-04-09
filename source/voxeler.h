@@ -67,9 +67,12 @@ bool loadSTL(const std::string& filename, std::vector<Triangle>& triangles);
  * @param Nz Number of voxels in Z direction
  * @param minB Minimum bounds of the voxel grid
  * @param maxB Maximum bounds of the voxel grid
+ * @param offsetX Optional X offset in voxel units from global origin
+ * @param offsetY Optional Y offset in voxel units from global origin
+ * @param offsetZ Optional Z offset in voxel units from global origin
  */
 void saveVoxelMetadata(const std::string& baseFilename, double voxelSize, int Nx, int Ny, int Nz,
-    const Vector3& minB, const Vector3& maxB);
+    const Vector3& minB, const Vector3& maxB, int offsetX = 0, int offsetY = 0, int offsetZ = 0);
 
 /**
  * Determines if a triangle from the STL surface mesh intersects with an axis-aligned box (a voxel)

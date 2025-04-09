@@ -19,7 +19,11 @@
 int main(int argc, char* argv[]) {
     // Validate command-line arguments
     if (argc < 2) {
-        std::cerr << "Usage: voxelizer <input.stl> [voxel_size] [fill]\n";
+        std::cerr << "Usage: voxelizer <input.stl> [voxel_size] [options]\n";
+        std::cerr << "Options:\n";
+        std::cerr << "  --fill      Fill interior volume\n";
+        std::cerr << "  --dense     Output in dense format\n";
+        std::cerr << "  --align     Align voxels to global grid (0,0,0 origin)\n";
         return 1;
     }
     
@@ -39,6 +43,7 @@ int main(int argc, char* argv[]) {
     // If enabled, the algorithm will mark voxels inside the mesh as occupied
     bool fillInterior = false;
     bool denseOutput = false;
+    bool gridAligned = false;
 
     // Process all optional arguments
     for (int i = 3; i < argc; i++) {
@@ -47,6 +52,8 @@ int main(int argc, char* argv[]) {
             fillInterior = true;
         } else if (arg == "--dense") {
             denseOutput = true;
+        } else if (arg == "--align") {
+            gridAligned = true;
         }
     }
 
@@ -80,13 +87,59 @@ int main(int argc, char* argv[]) {
         }
     }
     
+    // Print the bounding box information
+    std::cout << "\nSTL Bounding Box Information:" << std::endl;
+    std::cout << "  X: " << minB.x << " to " << maxB.x << " (width: " << maxB.x - minB.x << ")" << std::endl;
+    std::cout << "  Y: " << minB.y << " to " << maxB.y << " (depth: " << maxB.y - minB.y << ")" << std::endl;
+    std::cout << "  Z: " << minB.z << " to " << maxB.z << " (height: " << maxB.z - minB.z << ")" << std::endl;
+    std::cout << "  Volume: " << (maxB.x - minB.x) * (maxB.y - minB.y) * (maxB.z - minB.z) << std::endl;
+    
+    // Check for negative coordinates and issue a warning
+    if (minB.x < 0 || minB.y < 0 || minB.z < 0) {
+        std::cout << "\nWARNING: Model extends into negative coordinate space!" << std::endl;
+        if (minB.x < 0) std::cout << "  X minimum is negative: " << minB.x << std::endl;
+        if (minB.y < 0) std::cout << "  Y minimum is negative: " << minB.y << std::endl;
+        if (minB.z < 0) std::cout << "  Z minimum is negative: " << minB.z << std::endl;
+    }
+    
+    // Calculate voxel offset from global origin
+    // This represents how many voxels away from (0,0,0) our grid starts
+    int offsetX = 0, offsetY = 0, offsetZ = 0;
+
     // Add padding to ensure the entire mesh is inside the voxel grid
     // This prevents clipping of the mesh at the boundaries
-    // TODO: Consider removing this padding when exporting 
-    // TODO: Check if we were voxel anything within the padding 
     double padding = voxelSize;
-    minB = minB - Vector3(padding, padding, padding);
-    maxB = maxB + Vector3(padding, padding, padding);
+    
+    if (gridAligned) {
+        std::cout << "\nUsing grid-aligned coordinates" << std::endl;
+        
+        // For grid-aligned mode, calculate offset in voxel units from global origin (0,0,0)
+        offsetX = static_cast<int>(std::floor(minB.x / voxelSize));
+        offsetY = static_cast<int>(std::floor(minB.y / voxelSize));
+        offsetZ = static_cast<int>(std::floor(minB.z / voxelSize));
+
+        // For grid-aligned mode, snap to voxel grid multiples
+        minB.x = offsetX * voxelSize;
+        minB.y = offsetY * voxelSize;
+        minB.z = offsetZ * voxelSize;
+        
+        // Add padding to max bounds
+        maxB.x = std::ceil((maxB.x + padding) / voxelSize) * voxelSize;
+        maxB.y = std::ceil((maxB.y + padding) / voxelSize) * voxelSize;
+        maxB.z = std::ceil((maxB.z + padding) / voxelSize) * voxelSize;
+        
+        std::cout << "  Adjusted bounds to align with voxel grid:" << std::endl;
+        std::cout << "  X: " << minB.x << " to " << maxB.x << std::endl;
+        std::cout << "  Y: " << minB.y << " to " << maxB.y << std::endl;
+        std::cout << "  Z: " << minB.z << " to " << maxB.z << std::endl;
+
+        std::cout << "Voxel grid offset from origin: " << offsetX << ", "
+            << offsetY << ", " << offsetZ << " (in voxel units)" << std::endl;
+    } else {
+        // Add padding to ensure the entire mesh is inside the grid
+        minB = minB - Vector3(padding, padding, padding);
+        maxB = maxB + Vector3(padding, padding, padding);
+    }
 
     // Calculate voxel grid dimensions based on the bounding box and voxel size
     // ceil() ensures we have enough voxels to cover the entire bounding box
@@ -423,21 +476,7 @@ int main(int argc, char* argv[]) {
     std::string outputFilename = baseFilename + formatSuffix + ".txt";
     
     // Call the metadata saving function before writing the actual voxel data
-    saveVoxelMetadata(baseFilename, voxelSize, Nx, Ny, Nz, minB, maxB);
-
-    // Note: The simple approach below is commented out as it's less efficient
-    // for large models due to frequent I/O operations
-    // std::ofstream out(outputFilename);
-    // for (int k = 0; k < Nz; ++k)
-    //     for (int j = 0; j < Ny; ++j)
-    //         for (int i = 0; i < Nx; ++i)
-    //             if (voxels[index(i, j, k)]) {
-    //                 Vector3 center(minB.x + (i + 0.5) * voxelSize,
-    //                     minB.y + (j + 0.5) * voxelSize,
-    //                     minB.z + (k + 0.5) * voxelSize);
-    //                 out << center.x << " " << center.y << " " << center.z << "\n";
-    //             }
-    // out.close();
+    saveVoxelMetadata(baseFilename, voxelSize, Nx, Ny, Nz, minB, maxB, offsetX, offsetY, offsetZ);
 
     auto writeStartTime = std::chrono::high_resolution_clock::now();
 
