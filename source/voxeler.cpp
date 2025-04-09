@@ -11,21 +11,6 @@
 #include <chrono>
 #include <iomanip>
 
-// Vector3 structure for 3D vector representation
-struct Vector3 {
-    double x, y, z;
-    // Default constructor initializes vector to origin (0,0,0)
-    Vector3() : x(0), y(0), z(0) {}
-    // Constructor with specific coordinates
-    Vector3(double a, double b, double c) : x(a), y(b), z(c) {}
-    // Vector addition operator
-    Vector3 operator+(const Vector3& v) const { return Vector3(x + v.x, y + v.y, z + v.z); }
-    // Vector subtraction operator
-    Vector3 operator-(const Vector3& v) const { return Vector3(x - v.x, y - v.y, z - v.z); }
-    // Scalar multiplication operator
-    Vector3 operator*(double s) const { return Vector3(x * s, y * s, z * s); }
-};
-
 // Calculate dot product between two vectors (scalar result)
 double dot(const Vector3& a, const Vector3& b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
@@ -40,12 +25,6 @@ Vector3 cross(const Vector3& a, const Vector3& b) {
         a.x * b.y - a.y * b.x
     );
 }
-
-// Triangle structure for 3D geometry representation
-// Contains three vertices defining the triangle
-struct Triangle {
-    Vector3 v0, v1, v2;
-};
 
 /**
  * Loads triangular mesh from an STL file
